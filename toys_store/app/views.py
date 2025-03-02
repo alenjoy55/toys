@@ -11,7 +11,7 @@ import razorpay
 from django.http import JsonResponse
 import json
 from django.views.decorators.csrf import csrf_exempt
-import pkg_resources
+
 
 
 # Create your views here.
@@ -35,29 +35,54 @@ def toy_login(req):
                                 return redirect(user_home)
                 else:
                     messages.warning(req,'Invaild username or password!!!')
-                    return redirect(user_home)
+                    return redirect(toy_login)
         else:
                 return render(req,'login.html')
 
+def OTP(req):
+    digits = "0123456789"
+    OTP = ""
+    for i in range(6) :
+        OTP += digits[math.floor(random.random() * 10)]
+    return OTP
+
 def register(req):
     if req.method=='POST':
-        name=req.POST['uname']
         email=req.POST['email']
+        name=req.POST['uname']
         password=req.POST['password']
-        # send_mail('e_shop registration', 'e_shop account created', settings.EMAIL_HOST_USER, [email])
-
-        try:
-            data=User.objects.create_user(first_name=name,username=email,email=email,password=password)
-            data.save()
-            return redirect(toy_login)
-        except:
-                messages.warning(req, "user already exists")
-                return redirect(register)
-
+        otp=OTP(req)
+        if User.objects.filter(email=email).exists():
+            messages.error(req, "Email is already in use.")
+            return redirect(register)
+        else:
+            send_mail('Your registration OTP ,',f"OTP for registration is {otp}", settings.EMAIL_HOST_USER, [email])
+            messages.success(req, "Registration successful. Please check your email for OTP.")
+            return redirect("validate",name=name,password=password,email=email,otp=otp)
+        # try:
+        #     data=User.objects.create_user(first_name=uname,email=email,username=email,password=password)
+        #     data.save()
+        #     return redirect(gro_login)
+        # except:
+        #     messages.warning(req,'Email Already Exists!!')
+        #     return redirect(register)
     else:
         return render(req,'register.html')
 
-        
+def validate(req,name,password,email,otp):
+    if req.method=='POST':
+        uotp=req.POST['uotp']
+        if uotp==otp:
+            data=User.objects.create_user(first_name=name,email=email,password=password,username=email)
+            data.save()
+            messages.success(req, "OTP verified successfully. You can now log in.")
+            return redirect(toy_login)
+        else:
+            messages.error(req, "Invalid OTP. Please try again.")
+            return redirect("validate",name=name,password=password,email=email,otp=otp)
+    else:
+        return render(req,'validate.html',{'name':name,'pass':password,'email':email,'otp':otp})
+
 def toy_logout(req):
     logout(req)
     req.session.flush()
@@ -184,13 +209,16 @@ def bookings(req):
 # -------------------User--------------
 
 def user_home(req):
+    # if 'user' in req.session:
         product=Product.objects.all()
         data=Details.objects.all()
         data1=Category.objects.all()
         return render(req,'user/user.html',{'products':product,'data':data,'data1':data1})
-   
+    # else:
+    #      return redirect(gro_login)
      
 def view_pro(req,pid):
+    # if 'user' in req.session:
         data=Product.objects.get(pk=pid)
         data1=Details.objects.filter(product=pid)
         data2=Details.objects.get(product=pid,pk=data1[0].pk)
@@ -199,7 +227,8 @@ def view_pro(req,pid):
                 dis=req.GET.get('dis')
                 data2=Details.objects.get(product=pid,pk=dis)
         return render(req,'user/view_product.html',{'data':data,'data1':data1,'data2':data2,'cat':cat})
-   
+    # else:
+    #      return redirect(gro_login)
     
 def add_to_cart(req,id):
     if 'user' in req.session:
@@ -304,6 +333,8 @@ def orderSummary(req,prod,data):
         return redirect(toy_login)
 
 
+
+
 def address(req):
     if 'user' in req.session:
         user=User.objects.get(username=req.session['user'])
@@ -324,7 +355,28 @@ def address(req):
             return render(req,"user/address.html",{'data':data})
     else:
         return redirect(toy_login) 
-    
+
+def update_username(req):
+    if req.method == "POST":
+        new_first_name = req.POST.get("name")
+        new_username = req.POST.get("username")
+
+        
+        if User.objects.filter(username=new_username).exclude(id=req.user.id).exists():
+            messages.error(req, "This username is already taken. Please choose another one.")
+            return redirect(address) 
+
+        
+        if new_first_name and new_username:
+            req.user.first_name = new_first_name
+            req.user.username = new_username
+            req.user.save()
+            messages.success(req, "Username updated successfully!")
+        else:
+            messages.error(req, "Username and Name cannot be empty.")
+    return redirect(address)
+
+
 def delete_address(req,pid):
     if 'user' in req.session:
         data=Address.objects.get(pk=pid)
@@ -370,7 +422,7 @@ def orderSummary2(req,price,total):
     if 'user' in req.session:
         user=User.objects.get(username=req.session['user'])
         data=Address.objects.filter(user=user)
-        carts=Cart.objects.filter(user=user)
+        carts=Cart.objects.filter(user=user)# return render(req,'user/orderSummary2.html',{'cart':cart,'data':data,'discount':discount,'price':price,'total':total})
         if req.method == 'POST':
             address=req.POST['address']
             pay1=req.POST['payable']
@@ -379,12 +431,76 @@ def orderSummary2(req,price,total):
             cat=Category.objects.all()
             return render(req,'user/cartorder.html',{'data2':carts,'data':data,'price':price,'total':total,'cat':cat})
         req.session['address']=addr.pk
+        # req.session['detail']=carts.pk
         if pay1 == 'paynow':
             return redirect("payment2")    
         else:
             return redirect(book2)    
     else:
         return redirect(toy_login)
+
+def order_payment(req):
+    if 'user' in req.session:
+        user = User.objects.get(username=req.session['user'])
+        name = user.first_name
+        data=Details.objects.get(pk=req.session['detail'])
+        amount = data.off_price
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        razorpay_order = client.order.create(
+            {"amount": int(amount) * 100, "currency": "INR", "payment_capture": "1"}
+        )
+        order_id=razorpay_order['id']
+        order = Order.objects.create(
+            name=name, amount=amount, provider_order_id=order_id
+        )
+        order.save()
+        return render(
+            req,
+            "user/payment.html",
+            {
+                "callback_url": "http://127.0.0.1:8000/callback",
+                "razorpay_key": settings.RAZORPAY_KEY_ID,
+                "order": order,
+            },
+        )
+    else:
+        return render(toy_login)
+
+@csrf_exempt
+def callback(request):
+    def verify_signature(response_data):
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        return client.utility.verify_payment_signature(response_data)
+
+    if "razorpay_signature" in request.POST:
+        payment_id = request.POST.get("razorpay_payment_id", "")
+        provider_order_id = request.POST.get("razorpay_order_id", "")
+        signature_id = request.POST.get("razorpay_signature", "")
+        order = Order.objects.get(provider_order_id=provider_order_id)
+        order.payment_id = payment_id
+        order.signature_id = signature_id
+        order.save()
+        if not verify_signature(request.POST):
+            order.status = PaymentStatus.SUCCESS
+            order.save()
+            return render(request, "callback.html", context={"status": order.status})  
+ 
+        else:
+            order.status = PaymentStatus.FAILURE
+            order.save()
+            return redirect("buy_pro")
+
+    else:
+        payment_id = json.loads(request.POST.get("error[metadata]")).get("payment_id")
+        provider_order_id = json.loads(request.POST.get("error[metadata]")).get(
+            "order_id"
+        )
+        order = Order.objects.get(provider_order_id=provider_order_id)
+        order.payment_id = payment_id
+        order.status = PaymentStatus.FAILURE
+        order.save()
+        return render(request, "callback.html", context={"status": order.status})  
+
 
 def payment2(req):
     if 'user' in req.session:
@@ -418,6 +534,40 @@ def payment2(req):
         )
     else:
         return redirect(toy_login) 
+    
+def callback2(request):
+    def verify_signature(response_data):
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        return client.utility.verify_payment_signature(response_data)
+
+    if "razorpay_signature" in request.POST:
+        payment_id = request.POST.get("razorpay_payment_id", "")
+        provider_order_id = request.POST.get("razorpay_order_id", "")
+        signature_id = request.POST.get("razorpay_signature", "")
+        order = Order.objects.get(provider_order_id=provider_order_id)
+        order.payment_id = payment_id
+        order.signature_id = signature_id
+        order.save()
+        if not verify_signature(request.POST):
+            order.status = PaymentStatus.SUCCESS
+            order.save()
+            return render(request, "callback.html", context={"status": order.status})  
+        else:
+            order.status = PaymentStatus.FAILURE
+            order.save()
+            return redirect("book2")
+
+    else:
+        payment_id = json.loads(request.POST.get("error[metadata]")).get("payment_id")
+        provider_order_id = json.loads(request.POST.get("error[metadata]")).get(
+            "order_id"
+        )
+        order = Order.objects.get(provider_order_id=provider_order_id)
+        order.payment_id = payment_id
+        order.status = PaymentStatus.FAILURE
+        order.save()
+        return render(request, "callback.html", context={"status": order.status})      
+
 def book2(req):
     if 'user' in req.session:
         user=User.objects.get(username=req.session['user'])
@@ -448,3 +598,17 @@ def deleteBookings(req,pid):
         return redirect(user_bookings)
     else:
         return redirect(toy_login)
+
+def buy_product(req):
+    if 'user' in req.session:
+        prod=Details.objects.get(pk=req.session['detail'])
+        user=User.objects.get(username=req.session['user'])
+        quantity=1
+        price=prod.off_price
+        buy=Buy.objects.create(details=prod,user=user,quantity=quantity,tot_price=price,address=Address.objects.get(pk=req.session['address']))
+        buy.save()
+        prod.stock-=1
+        prod.save()
+        return redirect(user_bookings)
+    else:
+         return redirect(toy_login)
